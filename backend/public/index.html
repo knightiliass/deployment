@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Software Deployment Dashboard</title>
+  <!-- Chart.js for charts -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.0/chart.min.js"></script>
+  <!-- Tailwind CSS -->
+  <link
+    href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css"
+    rel="stylesheet"
+  />
+  <style>
+    .progress-bar {
+      transition: width 0.3s ease;
+    }
+    .computer-info {
+      background-color: #f8fafc;
+      border-left: 4px solid #3b82f6;
+      margin-top: 4px;
+      padding: 8px;
+      font-size: 0.9em;
+    }
+    .version-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 0.85em;
+      background-color: #e5e7eb;
+      margin-left: 8px;
+    }
+    .status-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 6px;
+    }
+    .status-dot.online {
+      background-color: #10B981;
+    }
+    .status-dot.offline {
+      background-color: #EF4444;
+    }
+    .loading-spinner {
+      display: none; 
+      margin-left: 8px;
+      border: 4px solid #f3f3f3; /* Light gray */
+      border-top: 4px solid #3498db; /* Blue */
+      border-radius: 50%;
+      width: 20px;
+      height: 20px;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      0%   { transform: rotate(0deg);   }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body class="bg-gray-100">
+
+<div class="container mx-auto px-4 py-8">
+  <!-- Main Input Form -->
+  <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+    <h1 class="text-2xl font-bold mb-6">Software Deployment Manager</h1>
+    
+    <div class="grid grid-cols-1 gap-6">
+      <div class="mb-4">
+        <label class="block text-sm font-medium mb-2">Software URL:</label>
+        <input 
+          type="text"
+          id="installerUrl"
+          class="w-full p-2 border rounded"
+          placeholder="https://example.com/installer.exe"
+        />
+      </div>
+      
+      <div class="mb-4">
+        <label class="block text-sm font-medium mb-2">Computer List (one per line):</label>
+        <textarea
+          id="computers"
+          rows="5"
+          class="w-full p-2 border rounded"
+          placeholder="COMPUTER1&#10;COMPUTER2&#10;COMPUTER3"
+        ></textarea>
+        <!-- Loading spinner (shown while checking versions) -->
+        <div id="versionLoadingSpinner" class="loading-spinner"></div>
+        
+        <!-- Where we display version info for each computer -->
+        <div id="computerVersions" class="mt-4 space-y-2"></div>
+      </div>
+      
+      <button
+        id="deployBtn"
+        onclick="startDeployment()"
+        class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors"
+      >
+        Start Deployment
+      </button>
+    </div>
+  </div>
+
+  <!-- Stats Overview -->
+  <div class="grid grid-cols-4 gap-4 mb-6">
+    <div class="bg-white rounded-lg shadow p-4">
+      <h3 class="text-sm font-medium text-gray-500">Total Deployments</h3>
+      <div id="totalDeployments" class="text-2xl font-bold">0</div>
+    </div>
+    <div class="bg-white rounded-lg shadow p-4">
+      <h3 class="text-sm font-medium text-gray-500">Success Rate</h3>
+      <div id="successRate" class="text-2xl font-bold">0%</div>
+    </div>
+    <div class="bg-white rounded-lg shadow p-4">
+      <h3 class="text-sm font-medium text-gray-500">In Progress</h3>
+      <div id="inProgress" class="text-2xl font-bold">0</div>
+    </div>
+    <div class="bg-white rounded-lg shadow p-4">
+      <h3 class="text-sm font-medium text-gray-500">Failed</h3>
+      <div id="failed" class="text-2xl font-bold">0</div>
+    </div>
+  </div>
+
+  <!-- Charts -->
+  <div class="grid grid-cols-2 gap-6 mb-6">
+    <div class="bg-white rounded-lg shadow p-4">
+      <h3 class="text-lg font-medium mb-4">Deployment Status</h3>
+      <canvas id="statusChart"></canvas>
+    </div>
+    <div class="bg-white rounded-lg shadow p-4">
+      <h3 class="text-lg font-medium mb-4">Progress Overview</h3>
+      <canvas id="progressChart"></canvas>
+    </div>
+  </div>
+
+  <!-- Current Deployments -->
+  <div id="currentDeployments" class="bg-white rounded-lg shadow-lg p-6">
+    <h2 class="text-xl font-bold mb-4">Current Deployments</h2>
+    <div id="deploymentsList" class="space-y-4">
+      <!-- Deployment items will be added here dynamically -->
+    </div>
+  </div>
+</div>
+
+<script>
+/**
+ * Global variables
+ */
+let charts = {
+  status: null,
+  progress: null
+};
+let currentDeploymentId = null;
+let computerVersionsData = {}; // to store version check results
+
+/**
+ * Initialize the charts on page load
+ */
+function initializeCharts() {
+  // Status Chart (Donut)
+  const statusCtx = document.getElementById('statusChart').getContext('2d');
+  charts.status = new Chart(statusCtx, {
+    type: 'doughnut',
+    data: {
+      labels: ['Success', 'In Progress', 'Failed'],
+      datasets: [{
+        data: [0, 0, 0],
+        backgroundColor: ['#4CAF50', '#FFA726', '#EF5350']
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { position: 'bottom' }
+      }
+    }
+  });
+
+  // Progress Chart (Bar)
+  const progressCtx = document.getElementById('progressChart').getContext('2d');
+  charts.progress = new Chart(progressCtx, {
+    type: 'bar',
+    data: {
+      labels: [],
+      datasets: [{
+        label: 'Deployment Progress (%)',
+        data: [],
+        backgroundColor: '#2196F3'
+      }]
+    },
+    options: {
+      responsive: true,
+      scales: {
+        y: {
+          beginAtZero: true,
+          max: 100
+        }
+      }
+    }
+  });
+}
+
+/**
+ * Display the computer version info under the textarea
+ */
+function displayComputerVersions(computers) {
+  const versionsDiv = document.getElementById('computerVersions');
+  versionsDiv.innerHTML = computers.map((computer) => `
+    <div class="computer-info">
+      <div class="flex justify-between items-center">
+        <div class="flex items-center">
+          <span class="status-dot ${computer.IsReachable ? 'online' : 'offline'}"></span>
+          <strong>${computer.ComputerName}</strong>
+          ${
+            computer.Version 
+              ? `<span class="version-badge">v${computer.Version}</span>` 
+              : '<span class="version-badge text-gray-500">No version</span>'
+          }
+        </div>
+        <span class="${computer.IsReachable ? 'text-green-600' : 'text-red-600'} font-medium">
+          ${computer.IsReachable ? 'Online' : 'Offline'}
+        </span>
+      </div>
+      ${
+        computer.IsReachable 
+          ? `
+            <div class="mt-2 text-gray-700">
+              Installation Status: 
+              <span class="font-medium">${computer.IsInstalled ? 'Installed' : 'Not Installed'}</span>
+            </div>
+            ${
+              computer.InstallPath 
+                ? `<div class="text-gray-600 text-sm mt-1">Path: ${computer.InstallPath}</div>`
+                : ''
+            }
+          `
+          : `<div class="text-red-500 text-sm mt-1">
+               ${computer.Error || 'Unable to reach computer'}
+             </div>`
+      }
+    </div>
+  `).join('');
+}
+
+/**
+ * Check the versions of the computers typed/pasted in the textarea
+ */
+async function checkComputerVersions() {
+  const computers = document.getElementById('computers').value
+    .split('\n')
+    .map((c) => c.trim())
+    .filter(Boolean);
+
+  // If empty, clear version area and stop
+  if (computers.length === 0) {
+    document.getElementById('computerVersions').innerHTML = '';
+    return;
+  }
+
+  // Show the spinner
+  document.getElementById('versionLoadingSpinner').style.display = 'inline-block';
+
+  try {
+    const response = await fetch('/api/get-computer-info', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ computers })
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch computer information');
+    }
+
+    const data = await response.json();
+    // Store the data
+    computerVersionsData = data.computers.reduce((acc, comp) => {
+      acc[comp.ComputerName] = comp;
+      return acc;
+    }, {});
+
+    displayComputerVersions(data.computers);
+  } catch (error) {
+    console.error('Failed to get computer versions:', error);
+    document.getElementById('computerVersions').innerHTML = `
+      <div class="text-red-500 p-3 bg-red-50 rounded">
+        Failed to fetch version information: ${error.message}
+      </div>
+    `;
+  } finally {
+    // Hide the spinner
+    document.getElementById('versionLoadingSpinner').style.display = 'none';
+  }
+}
+
+/**
+ * Called when user clicks "Start Deployment"
+ */
+async function startDeployment() {
+  const installerUrl = document.getElementById('installerUrl').value.trim();
+  const computers = document.getElementById('computers').value
+    .split('\n')
+    .map((c) => c.trim())
+    .filter(Boolean);
+
+  if (!installerUrl || computers.length === 0) {
+    alert('Please provide the installer URL and at least one computer name.');
+    return;
+  }
+
+  // Disable the button so user doesn't spam
+  document.getElementById('deployBtn').disabled = true;
+
+  try {
+    const response = await fetch('/api/deploy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        computers,
+        installerUrl
+      })
+    });
+
+    const data = await response.json();
+    if (data.error) {
+      throw new Error(data.error);
+    }
+
+    // We got a deploymentId from the server
+    currentDeploymentId = data.deploymentId;
+
+    // Start polling the deployment status
+    pollDeploymentStatus();
+  } catch (err) {
+    console.error('Deployment failed to start:', err);
+    alert(`Error: ${err.message}`);
+    // Re-enable the button on error
+    document.getElementById('deployBtn').disabled = false;
+  }
+}
+
+/**
+ * Periodically fetch the deployment status from the server
+ */
+async function pollDeploymentStatus() {
+  if (!currentDeploymentId) return;
+
+  try {
+    const response = await fetch(`/api/deployment/${currentDeploymentId}`);
+    if (!response.ok) {
+      throw new Error('Failed to get deployment status');
+    }
+    const deployment = await response.json();
+
+    // Update the UI with the latest status
+    updateDeploymentStatus(deployment);
+    updateCharts(deployment);
+    updateStats(deployment);
+
+    // Check if all computers are done
+    const isComplete = deployment.computers.every(
+      (c) => c.status === 'success' || c.status === 'failed'
+    );
+
+    if (!isComplete) {
+      setTimeout(pollDeploymentStatus, 2000);
+    } else {
+      // Re-enable the button once everything is done
+      document.getElementById('deployBtn').disabled = false;
+    }
+  } catch (err) {
+    console.error('Error fetching deployment status:', err);
+    setTimeout(pollDeploymentStatus, 3000);
+  }
+}
+
+/**
+ * Update the stats overview (total, successRate, inProgress, failed)
+ */
+function updateStats(deployment) {
+  const total = deployment.computers.length;
+  const successCount = deployment.computers.filter((c) => c.status === 'success').length;
+  const failedCount = deployment.computers.filter((c) => c.status === 'failed').length;
+  const inProgressCount = deployment.computers.filter(
+    (c) => c.status !== 'success' && c.status !== 'failed'
+  ).length;
+
+  document.getElementById('totalDeployments').innerText = total;
+  document.getElementById('successRate').innerText = total === 0 
+    ? '0%'
+    : `${Math.round((successCount / total) * 100)}%`;
+  document.getElementById('inProgress').innerText = inProgressCount;
+  document.getElementById('failed').innerText = failedCount;
+}
+
+/**
+ * Update the status chart + progress chart
+ */
+function updateCharts(deployment) {
+  // Status chart
+  let success = 0, failed = 0, inProgress = 0;
+  for (const c of deployment.computers) {
+    if (c.status === 'success') success++;
+    else if (c.status === 'failed') failed++;
+    else inProgress++;
+  }
+  charts.status.data.datasets[0].data = [success, inProgress, failed];
+  charts.status.update();
+
+  // Progress chart
+  const labels = deployment.computers.map((c) => c.name);
+  const progressData = deployment.computers.map((c) => c.progress || 0);
+
+  charts.progress.data.labels = labels;
+  charts.progress.data.datasets[0].data = progressData;
+  charts.progress.update();
+}
+
+/**
+ * Render the list of computers under "Current Deployments"
+ */
+function updateDeploymentStatus(deployment) {
+  const deploymentsList = document.getElementById('deploymentsList');
+  deploymentsList.innerHTML = deployment.computers.map((computer) => {
+    return `
+      <div class="border rounded p-4">
+        <div class="flex justify-between items-center mb-2">
+          <div>
+            <h3 class="font-medium">${computer.name}</h3>
+            <!-- If we stored initial version data, we can show it here -->
+            <div class="text-sm text-gray-600">
+              Current Version: ${
+                computerVersionsData[computer.name]?.Version || 'Not Installed'
+              }
+            </div>
+          </div>
+          <span class="px-2 py-1 rounded text-sm ${getStatusClass(computer.status)}">
+            ${computer.status.toUpperCase()}
+          </span>
+        </div>
+        <div class="space-y-2">
+          <div class="relative pt-1">
+            <div class="flex mb-2 items-center justify-between">
+              <div>
+                <span class="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full ${getStatusClass(computer.status)}">
+                  ${computer.details || 'In Progress...'}
+                </span>
+              </div>
+              <div class="text-right">
+                <span class="text-xs font-semibold inline-block ${getStatusClass(computer.status)}">
+                  ${computer.progress || 0}%
+                </span>
+              </div>
+            </div>
+            <div class="overflow-hidden h-2 mb-4 text-xs flex rounded bg-gray-200">
+              <div
+                class="progress-bar shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center ${getProgressBarColor(computer.status)}"
+                style="width: ${computer.progress || 0}%"
+              ></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function getStatusClass(status) {
+  switch (status) {
+    case 'success':
+      return 'bg-green-500 text-white';
+    case 'failed':
+      return 'bg-red-500 text-white';
+    default:
+      return 'bg-yellow-500 text-white'; // for 'deploying' or 'pending'
+  }
+}
+
+function getProgressBarColor(status) {
+  switch (status) {
+    case 'success':
+      return 'bg-green-500';
+    case 'failed':
+      return 'bg-red-500';
+    default:
+      return 'bg-blue-500'; // in-progress
+  }
+}
+
+/**
+ * On page load
+ */
+document.addEventListener('DOMContentLoaded', () => {
+  // Initialize the charts
+  initializeCharts();
+
+  // Anytime user types or pastes into the "computers" field, check versions
+  const computersTA = document.getElementById('computers');
+  computersTA.addEventListener('input', () => {
+    checkComputerVersions();
+  });
+  computersTA.addEventListener('paste', () => {
+    // small delay to let the paste happen
+    setTimeout(checkComputerVersions, 50);
+  });
+});
+</script>
+</body>
+</html>

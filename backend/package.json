@@ -1,0 +1,25 @@
+{
+  "name": "software-deployment-manager",
+  "version": "1.0.0",
+  "description": "Software Deployment Management Dashboard",
+  "main": "server2.js",
+  "scripts": {
+    "start": "node server2.js",
+    "build": "npm run build:clean && npm run build:copy",
+    "build:clean": "rimraf dist",
+    "build:copy": "mkdir dist && npm run copy:server && npm run copy:client",
+    "copy:server": "copyfiles -u 0 \"server2.js\" \"package.json\" dist/",
+    "copy:client": "copyfiles -u 0 \"public/**/*\" dist/",
+    "install:prod": "cd dist && npm install --production",
+    "package": "npm run build && npm run install:prod && cd dist && bestzip ../deployment.zip *"
+  },
+  "dependencies": {
+    "express": "^4.17.1",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "rimraf": "^5.0.1",
+    "copyfiles": "^2.4.1",
+    "bestzip": "^2.2.1"
+  }
+}
